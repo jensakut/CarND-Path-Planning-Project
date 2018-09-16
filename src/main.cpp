@@ -20,6 +20,8 @@ using json = nlohmann::json;
 constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
 double rad2deg(double x) { return x * 180 / pi(); }
+double mph2ms(double x)  { return x * 0.44704;    }
+
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
@@ -168,6 +170,16 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
+int d2lane(double d, double laneWidth) 
+{
+	if (0*laneWidth < d && d < 1*laneWidth)
+		return 0;
+	else if (1*laneWidth < d && d < 2*laneWidth)
+		return 1; 
+	else if (2*laneWidth < d && d < 3*laneWidth)
+		return 2; 
+}
+
 int main() {
   uWS::Hub h;
 
@@ -206,10 +218,10 @@ int main() {
   }
   
   //initial parameters
-  int lane = 1;
-  double ref_vel = 0; //mph
-  
-  h.onMessage([&ref_vel, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&lane](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  int currentLane = 1;
+  double ref_vel = 0; //m/s
+  int roadSize = 3; //number of lanes
+  h.onMessage([&ref_vel, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&currentLane, &roadSize](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -235,6 +247,10 @@ int main() {
           	double car_d = j[1]["d"];
           	double car_yaw = j[1]["yaw"];
           	double car_speed = j[1]["speed"];
+			
+			//speed Limit provided by map or someone
+			double speedLimit = mph2ms(50); //50 mph constant speed limit. 
+			
           	// Previous path data given to the Planner
           	auto previous_path_x = j[1]["previous_path_x"];
           	auto previous_path_y = j[1]["previous_path_y"];
@@ -253,7 +269,7 @@ int main() {
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
 			
 			int prev_size = previous_path_x.size();
-			cout << "prev_size " << prev_size << endl; 		
+			//cout << "prev_size " << prev_size << endl; 		
 			
 			
 			///
@@ -265,44 +281,105 @@ int main() {
 				car_s = end_path_s; 
 			}
 			
-			bool too_close = false; 
-			vector<bool> lanes_free;
+			bool tooClose = false; 
+			bool prepareLaneChange = false; 
+			bool laneChange = false; 
 			
+			double safetyDistance = 200; // 200 m is a big number
+			double followSpeed = speedLimit; 
+			double overtakeClearance = 25; 
+			double speedDiffToOvertake = 2; 
+
+			vector<bool> lanesFree = {true, true, true};		//is this lane next to me free?  
+			vector<double> lanesSpeed = {speedLimit, speedLimit, speedLimit}; // slowest car in lane
+			vector<double> lanesCars = {0, 0, 0}; //number of cars in that lane in front
 			//find rev_v to use
 			for(int i = 0; i < sensor_fusion.size(); i++) {
-				//car is in my lane
-				float d = sensor_fusion[i][6];
-				if(d<(2+4*lane + 2) && d > (2+4*lane-2)) {
-					double vx = sensor_fusion[i][3];
-					double vy = sensor_fusion[i][4];
-					double check_speed = sqrt(vx*vx+vy*vy);
-					double check_car_s = sensor_fusion[i][5];
-					
-					check_car_s+=(double)prev_size*.02*check_speed; //increment position one time step into the future
-					if (check_car_s > car_s && check_car_s-car_s < 30) {
-						too_close = true; 
-						double safety_distance = check_car_s-car_s;
-						if (lane>0)
-						{
-							lane = 0;
-						}
+				float  veh_d = sensor_fusion[i][6];
+				double veh_x = sensor_fusion[i][3];
+				double veh_y = sensor_fusion[i][4];
+				double veh_v = sqrt(veh_x*veh_x+veh_y*veh_y);
+				double veh_s = sensor_fusion[i][5];
+				double veh_s_future = sensor_fusion[i][5];
+				veh_s_future += (double)prev_size*.02*veh_v;//increment position into the future
+
+
+				//car is in ego's lane
+				if(veh_d<(4*currentLane + 4) && veh_d > (4*currentLane)) 
+				{   // check it's the smallest distance from vehicle and it's in front
+					if (veh_s_future-car_s < safetyDistance && veh_s > car_s) 
+					{
+						safetyDistance = veh_s_future-car_s;  //safety distance in the future 
 					}
 					
+					if (veh_s_future > car_s && veh_s_future-car_s < 30) 
+					{
+						tooClose = true; 
+						followSpeed = veh_v; 
+						prepareLaneChange = true;
+					}
+					
+
 				}
-				// which lanes are free 
+				
+				
+				//sort the car into a lane and add lanespeeds and occupied spaces 
+				int veh_lane = d2lane(veh_d, 4); 
+				// find slowest car in front of the vehicle 
+				if (lanesSpeed[veh_lane]>veh_v && veh_s > car_s) { 
+					lanesSpeed[veh_lane]=veh_v;
+				}
+				//check cars that are just about to overtake as well 
+				if(veh_s > car_s-overtakeClearance) 
+				{
+					//count how many cars there are 
+					lanesCars[veh_lane] +=1;
+					//check whether "future car" has room to overtake on the lanes 
+					//cout << i << " " << abs(veh_s_future-car_s);
+					if (overtakeClearance > abs(veh_s_future-car_s)) 
+					{
+						lanesFree[veh_lane] = false; 
+						//cout << "------------------------------------" << endl; 
+					}
+				}
 				
 			}
-			if(too_close) {
-				ref_vel -= .224;
-			}
-			else if(ref_vel<49.5) {
-				ref_vel += .224;
+			//cout << " " << endl; 
+			// behavior planning 
+			if (prepareLaneChange) {
+				if (currentLane > 0 && lanesFree[currentLane-1] && lanesSpeed[currentLane-1]>lanesSpeed[currentLane]+speedDiffToOvertake) {
+					currentLane -= 1;
+				}
+				else if (currentLane<2 && lanesFree[currentLane+1] && lanesSpeed[currentLane+1]>lanesSpeed[currentLane]+speedDiffToOvertake) {
+					currentLane += 1;
+				}
 			}
 			
+			
+			if(tooClose) {
+				ref_vel -= .1; //m/s²
+			}
+			else if(ref_vel<speedLimit-0.5) {
+				ref_vel += .1;   
+			}
+			
+			// some printing 
+			cout << "safeD " << int(safetyDistance) << " prepLC " << prepareLaneChange << " lanesFree "; 
+			for (auto i: lanesFree)
+				cout << i << " ";			
+			cout << " lanesCars ";   
+			for (auto i: lanesCars)
+				cout << i << " ";				
+			cout << " lanesSpeed ";
+			for (auto i: lanesSpeed)
+				cout << int(i) << " ";
+			cout << " ego_v " << int(ref_vel) << endl; 
+			
+			
 			///
+			/// Computation of path to follow 
 			///
-			///
-			//Create a list of widely spaced (x, y) waypoints, evenly spaced at 30 m
+			// Create a list of widely spaced (x, y) waypoints, evenly spaced at 30 m
 			// to be implemented with a spline
 			
 			vector<double> ptsx;
@@ -345,9 +422,9 @@ int main() {
 			}
 			
 			//In Frenet add evenly 30 m spaced points ahead of the starting reference (anker points)
-			vector<double> next_wp0 = getXY(car_s+30,(2+4*lane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
-			vector<double> next_wp1 = getXY(car_s+60,(2+4*lane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
-			vector<double> next_wp2 = getXY(car_s+90,(2+4*lane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
+			vector<double> next_wp0 = getXY(car_s+30,(2+4*currentLane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
+			vector<double> next_wp1 = getXY(car_s+60,(2+4*currentLane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
+			vector<double> next_wp2 = getXY(car_s+90,(2+4*currentLane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
 			ptsx.push_back(next_wp0[0]);
 			ptsx.push_back(next_wp1[0]);
 			ptsx.push_back(next_wp2[0]);
@@ -399,7 +476,7 @@ int main() {
 			
 			//fill up the rest of our path planner after filling it with previous points
 			for (int i = 1; i <= 50-previous_path_x.size(); i++) {
-				double N = target_dist/(0.02*ref_vel/2.24); //mph -> m/s  //ERROR?
+				double N = target_dist/(0.02*ref_vel); //mph -> m/s  //ERROR?
 				double x_point = x_add_on+(target_x)/N;
 				double y_point = s(x_point);
 				
