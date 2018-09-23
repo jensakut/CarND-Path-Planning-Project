@@ -10,18 +10,38 @@
 #include "json.hpp"
 #include "spline.h"
 
+#include "utility.h"
+#include "predictions.h"
 
 using namespace std;
+
 
 // for convenience
 using json = nlohmann::json;
 
 // For converting back and forth between radians and degrees.
-constexpr double pi() { return M_PI; }
-double deg2rad(double x) { return x * pi() / 180; }
+/*double deg2rad(double x) { return x * pi() / 180; }
 double rad2deg(double x) { return x * 180 / pi(); }
 double mph2ms(double x)  { return x * 0.44704;    }
+double distance(double x1, double y1, double x2, double y2)
+{
+	return sqrt((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1));
+}
+constexpr double pi() { return M_PI; }
 
+int d2lane(double d, double laneWidth) 
+{
+	if (0*laneWidth < d && d < 1*laneWidth)
+		return 0;
+	else if (1*laneWidth < d && d < 2*laneWidth)
+		return 1; 
+	else if (2*laneWidth < d && d < 3*laneWidth)
+		return 2; 
+}
+
+
+
+*/
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
@@ -38,10 +58,6 @@ string hasData(string s) {
   return "";
 }
 
-double distance(double x1, double y1, double x2, double y2)
-{
-	return sqrt((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1));
-}
 
 // closest (euklidian) without considering direction
 int ClosestWaypoint(double x, double y, const vector<double> &maps_x, const vector<double> &maps_y)
@@ -170,15 +186,7 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
-int d2lane(double d, double laneWidth) 
-{
-	if (0*laneWidth < d && d < 1*laneWidth)
-		return 0;
-	else if (1*laneWidth < d && d < 2*laneWidth)
-		return 1; 
-	else if (2*laneWidth < d && d < 3*laneWidth)
-		return 2; 
-}
+
 
 int main() {
   uWS::Hub h;
@@ -217,11 +225,21 @@ int main() {
   	map_waypoints_dy.push_back(d_y);
   }
   
-  //initial parameters
+  
+  
+  //initial model parameters
   int currentLane = 1;
   double ref_vel = 0; //m/s
-  int roadSize = 3; //number of lanes
-  h.onMessage([&ref_vel, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&currentLane, &roadSize](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  int roadSize = 3; //number of lanes  
+  
+  CarState ego = CarState(0., 0., 0., 0., 0., 0., ref_vel, 0., false);
+
+  double safety_distance_in = 200; 
+  double clearance_in = 25; 
+  double FOV_in = 75; 
+  Predictions predictions(safety_distance_in, clearance_in, FOV_in); 
+
+  h.onMessage([&ego, &predictions, &ref_vel, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&currentLane, &roadSize](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -241,13 +259,15 @@ int main() {
           // j[1] is the data JSON object
           
         	// Main car's localization Data
-          	double car_x = j[1]["x"];
-          	double car_y = j[1]["y"];
-          	double car_s = j[1]["s"];
-          	double car_d = j[1]["d"];
-          	double car_yaw = j[1]["yaw"];
-          	double car_speed = j[1]["speed"];
+          	ego.x = j[1]["x"];
+          	ego.y = j[1]["y"];
+          	ego.s = j[1]["s"];
+          	ego.d = j[1]["d"];
+          	ego.yaw = j[1]["yaw"];
+          	ego.speed = j[1]["speed"];
+			ego.lane = get_lane(ego.d);
 			
+
 			//speed Limit provided by map or someone
 			double speedLimit = mph2ms(50); //50 mph constant speed limit. 
 			
@@ -261,24 +281,27 @@ int main() {
           	double end_path_d = j[1]["end_path_d"];
 			
           	// Sensor Fusion Data, a list of all other cars on the same side of the road.
-          	auto sensor_fusion = j[1]["sensor_fusion"];
-
+          	vector<vector<double>> sensor_fusion = j[1]["sensor_fusion"];
+			
+			
           	json msgJson;
 		
 			
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
 			
 			int prev_size = previous_path_x.size();
-			//cout << "prev_size " << prev_size << endl; 		
+			cout << "prev_size " << prev_size << endl; 		
 			
 			
 			///
 			///
 			///
 			// Sensor fusion analytics and finite state machine
-			
+			cout << "sensor fusion" << endl; 			
+			predictions.update(sensor_fusion, ego, prev_size); 
+
 			if (prev_size > 0) {
-				car_s = end_path_s; 
+				ego.s = end_path_s; 
 			}
 			
 			bool tooClose = false; 
@@ -287,7 +310,7 @@ int main() {
 			
 			double safetyDistance = 200; // 200 m is a big number
 			double followSpeed = speedLimit; 
-			double overtakeClearance = 25; 
+			double overtake_clearance = 25; //could be a function of speed
 			double speedDiffToOvertake = 2; 
 
 			vector<bool> lanesFree = {true, true, true};		//is this lane next to me free?  
@@ -302,17 +325,17 @@ int main() {
 				double veh_s = sensor_fusion[i][5];
 				double veh_s_future = sensor_fusion[i][5];
 				veh_s_future += (double)prev_size*.02*veh_v;//increment position into the future
-
+				cout << veh_d << " x " << veh_x << "veh_s" << veh_s << endl; 
 
 				//car is in ego's lane
 				if(veh_d<(4*currentLane + 4) && veh_d > (4*currentLane)) 
 				{   // check it's the smallest distance from vehicle and it's in front
-					if (veh_s_future-car_s < safetyDistance && veh_s > car_s) 
+					if (veh_s_future-ego.s < safetyDistance && veh_s > ego.s) 
 					{
-						safetyDistance = veh_s_future-car_s;  //safety distance in the future 
+						safetyDistance = veh_s_future-ego.s;  //safety distance in the future 
 					}
 					
-					if (veh_s_future > car_s && veh_s_future-car_s < 30) 
+					if (veh_s_future > ego.s && veh_s_future - ego.s < 30) 
 					{
 						tooClose = true; 
 						followSpeed = veh_v; 
@@ -324,19 +347,19 @@ int main() {
 				
 				
 				//sort the car into a lane and add lanespeeds and occupied spaces 
-				int veh_lane = d2lane(veh_d, 4); 
+				int veh_lane = get_lane(veh_d); 
 				// find slowest car in front of the vehicle 
-				if (lanesSpeed[veh_lane]>veh_v && veh_s > car_s) { 
+				if (lanesSpeed[veh_lane]>veh_v && veh_s > ego.s) { 
 					lanesSpeed[veh_lane]=veh_v;
 				}
 				//check cars that are just about to overtake as well 
-				if(veh_s > car_s-overtakeClearance) 
+				if(veh_s > ego.s-overtake_clearance) 
 				{
 					//count how many cars there are 
 					lanesCars[veh_lane] +=1;
 					//check whether "future car" has room to overtake on the lanes 
 					//cout << i << " " << abs(veh_s_future-car_s);
-					if (overtakeClearance > abs(veh_s_future-car_s)) 
+					if (overtake_clearance > abs(veh_s_future-ego.s)) 
 					{
 						lanesFree[veh_lane] = false; 
 						//cout << "------------------------------------" << endl; 
@@ -344,7 +367,8 @@ int main() {
 				}
 				
 			}
-			//cout << " " << endl; 
+			
+			cout << " behavior " << endl; 
 			// behavior planning 
 			if (prepareLaneChange) {
 				if (currentLane > 0 && lanesFree[currentLane-1] && lanesSpeed[currentLane-1]>lanesSpeed[currentLane]+speedDiffToOvertake) {
@@ -386,22 +410,24 @@ int main() {
 			vector<double> ptsy;
 			
 			//reference x,y, yaw states
-			double ref_x = car_x;
-			double ref_y = car_y;
-			double ref_yaw = deg2rad(car_yaw);
-			
+			double ref_x = ego.x;
+			double ref_y = ego.y;
+			double ref_yaw = deg2rad(ego.yaw);
+			cout << "prev_size" << prev_size; 
 			//init: if previous size is empty, use the car init as starting reference
 			if(prev_size < 2)
-			{
+			{				
+				cout << "init" << endl; 
+
 				//use two points for continuity
-				double prev_car_x = car_x - cos(car_yaw);
-				double prev_car_y = car_y - sin(car_yaw);
+				double prev_car_x = ego.x - cos(ego.yaw);
+				double prev_car_y = ego.y - sin(ego.yaw);
 				
 				ptsx.push_back(prev_car_x);
-				ptsx.push_back(car_x);
+				ptsx.push_back(ego.x);
 				
 				ptsy.push_back(prev_car_y);
-				ptsy.push_back(car_y);
+				ptsy.push_back(ego.y);
 			}
 			else
 			{
@@ -419,12 +445,15 @@ int main() {
 				
 				ptsy.push_back(ref_y_prev);
 				ptsy.push_back(ref_y);
+				cout << " else" << endl; 
 			}
 			
 			//In Frenet add evenly 30 m spaced points ahead of the starting reference (anker points)
-			vector<double> next_wp0 = getXY(car_s+30,(2+4*currentLane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
-			vector<double> next_wp1 = getXY(car_s+60,(2+4*currentLane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
-			vector<double> next_wp2 = getXY(car_s+90,(2+4*currentLane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
+			cout << "next wp" << endl; 
+			
+			vector<double> next_wp0 = getXY(ego.s+30,(2+4*currentLane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
+			vector<double> next_wp1 = getXY(ego.s+60,(2+4*currentLane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
+			vector<double> next_wp2 = getXY(ego.s+90,(2+4*currentLane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
 			ptsx.push_back(next_wp0[0]);
 			ptsx.push_back(next_wp1[0]);
 			ptsx.push_back(next_wp2[0]);
@@ -442,18 +471,18 @@ int main() {
 				ptsx[i] = shift_x * cos(0-ref_yaw) - shift_y * sin(0-ref_yaw);
 				ptsy[i] = shift_x * sin(0-ref_yaw) + shift_y * cos(0-ref_yaw);
 			}
-			/*
+			
 			cout << " " << endl; 
 			cout << "spline points " << ptsx.size() << endl; 
 			for (int i = 0; i<ptsx.size(); i++){
 				cout << i << " " << ptsx[i] << " " << ptsy[i] << endl; 
-			}*/
+			}
 			
 			//TODO: Insert check that spline points aren't put in twice or list is empty. Otherwise spline crashes. 
 			
 			// create a spline 
 			tk::spline s;
-			
+			cout << "spline done" << endl; 
 			//set x,y) points to the spline
 			s.set_points(ptsx,ptsy);
 			
@@ -467,7 +496,7 @@ int main() {
 				next_x_vals.push_back(previous_path_x[i]);
 				next_y_vals.push_back(previous_path_y[i]);
 			}
-			
+			cout << "target" << endl; 
 			//calculate how to break up spline points to travel at desired speed 
 			double target_x = 30.0;
 			double target_y = s(target_x);
@@ -495,7 +524,7 @@ int main() {
 				next_y_vals.push_back(y_point);
 				
 			}
-			
+			cout << "end!" << endl; 
           	msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;
 
