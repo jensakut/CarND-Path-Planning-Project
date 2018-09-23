@@ -10,22 +10,45 @@
 
 struct Target {
   double lane;
+  double lane_final; 
   double velocity; // for JMT trajectories
   double time;  // for manoeuver
-  double accel; // XXX for emergency trajectories
-  Target(double l=0, double v=0, double t=0, double a=0) : lane(l), velocity(v), time(t), accel(a) {}
+  double accel; // in case of dynamic lane changing
 };
 
 
 class Behavior {
 public:
-  Behavior(std::vector<std::vector<double>> const &sensor_fusion);
+  Behavior(Road road_init); 
   virtual ~Behavior();
+
+  void updateBehavior(CarState &ego, Predictions &predictions);
   std::vector<Target> get_targets();
 
 private:
   std::vector<Target> targets_;
+  Road road; 
+  
 };
+
+
+
+
+
+
+
+Behavior::Behavior(Road road_init) {
+	road = road_init; 
+}
+
+Behavior::~Behavior() {}
+
+std::vector<Target> Behavior::get_targets() {
+  return targets_;
+}
+
+
+
 
 
 #endif // BEHAVIOR_H

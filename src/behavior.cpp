@@ -2,8 +2,8 @@
 
 using namespace std;
 
-Behavior::Behavior(vector<vector<double>> const &sensor_fusion) {
-
+Behavior::Behavior(Road road_init) {
+	road = road_init; 
 }
 
 Behavior::~Behavior() {}

@@ -9,14 +9,14 @@
 class Predictions 
 {
 	private: 
-		bool tooClose = false; 
+		//bool tooClose = false; 
 		
 		//some tunable semi-static parameters to be set with a constructor 
 		double safety_distance = 40; // 200 m is a big number
 		double clearance = 15; 
 		double FOV=200; 
-		
-		double inf = 1000;
+		Road road; 
+		double inf = 1000; //max speed?!
 		
 		std::vector<bool>   lane_free       = {true, true, true};		//is this lane next to me free?  
 		std::vector<double> lane_speed      = {inf, inf, inf}; // slowest car in lane
@@ -25,24 +25,25 @@ class Predictions
 		std::vector<double> dist_back       = {FOV, FOV, FOV};
 		
 	public: 
-		Predictions(double safety_distance_in, double clearance_in, double FOV_in);
+		Predictions(double safety_distance_in, double clearance_in, double FOV_in, Road road_in);
 
 		void update(std::vector<std::vector<double>> const &sensor_fusion, CarState ego, int prev_size);
 		
-		std::vector<bool>    get_lane_free();
-		std::vector<double>  get_lane_speed();
-		std::vector<double>  get_lane_occupation(); 
-		std::vector<double>  get_dist_front();
-		std::vector<double>  get_dist_back();
+		bool    get_lane_free(int lane);
+		double  get_lane_speed(int lane);
+		double  get_lane_occupation(int lane); 
+		double  get_dist_front(int lane);
+		double  get_dist_back(int lane);
 };
 
 
 
-Predictions::Predictions(double safety_distance_in, double clearance_in, double FOV_in)
+Predictions::Predictions(double safety_distance_in, double clearance_in, double FOV_in, Road road_in)
 {
 	safety_distance=safety_distance_in;
 	clearance = clearance_in; 
 	FOV = FOV_in;
+	road = road_in;
 }
 
 void Predictions::update(std::vector<std::vector<double>> const &sensor_fusion, CarState ego, int prev_size)
@@ -62,7 +63,7 @@ void Predictions::update(std::vector<std::vector<double>> const &sensor_fusion, 
 
 		double veh_v 		= sqrt(veh_x*veh_x+veh_y*veh_y);
 		veh_s 	   			+= (double)prev_size * .02 * veh_v;	//increment position into the future
-		int veh_lane 		= get_lane(veh_d); 
+		int veh_lane 		= get_lane(veh_d, road); 
 		double delta_s		= veh_s - ego.s;
 		
 		//sort the car into a lane and add to lanespeeds and occupied lanes respectively
@@ -86,28 +87,28 @@ void Predictions::update(std::vector<std::vector<double>> const &sensor_fusion, 
 		}
 	}
 }
-std::vector<bool> Predictions::get_lane_free() 
+bool Predictions::get_lane_free(int lane) 
 { 
-	return lane_free;
+	return lane_free[lane];
 }
 
-std::vector<double> Predictions::get_lane_speed() 
+double Predictions::get_lane_speed(int lane) 
 {
-	return lane_speed; 
+	return lane_speed[lane]; 
 };
 
-std::vector<double> Predictions::get_lane_occupation()
+double Predictions::get_lane_occupation(int lane)
 {
-	return lane_occupation; 
+	return lane_occupation[lane]; 
 }	
-std::vector<double> Predictions::get_dist_front()
+double Predictions::get_dist_front(int lane)
 {
-	return dist_front;
+	return dist_front[lane];
 }
 
-std::vector<double> Predictions::get_dist_back()
+double Predictions::get_dist_back(int lane)
 {
-	return dist_back;
+	return dist_back[lane];
 }
 
 
