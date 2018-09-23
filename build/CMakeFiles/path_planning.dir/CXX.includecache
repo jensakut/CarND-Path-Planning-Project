@@ -851,6 +851,16 @@ json.hpp
 /mnt/c/Users/jakut/Documents/Udacity/CarND-Path-Planning-Project/src/json.hpp
 spline.h
 /mnt/c/Users/jakut/Documents/Udacity/CarND-Path-Planning-Project/src/spline.h
+utility.h
+/mnt/c/Users/jakut/Documents/Udacity/CarND-Path-Planning-Project/src/utility.h
+predictions.h
+/mnt/c/Users/jakut/Documents/Udacity/CarND-Path-Planning-Project/src/predictions.h
+
+/mnt/c/Users/jakut/Documents/Udacity/CarND-Path-Planning-Project/src/predictions.h
+vector
+-
+utility.h
+/mnt/c/Users/jakut/Documents/Udacity/CarND-Path-Planning-Project/src/utility.h
 
 /mnt/c/Users/jakut/Documents/Udacity/CarND-Path-Planning-Project/src/spline.h
 cstdio
@@ -861,4 +871,6 @@ vector
 -
 algorithm
 -
+
+/mnt/c/Users/jakut/Documents/Udacity/CarND-Path-Planning-Project/src/utility.h
 
