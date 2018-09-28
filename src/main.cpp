@@ -14,7 +14,6 @@
 #include "predictions.h"
 #include "behavior.h"
 
-
 using namespace std;
 
 
@@ -210,18 +209,20 @@ int main() {
   
   
   //initial model parameters
-  int currentLane = 1;
-  double ref_vel = 1; //m/s
+
   
-  CarState ego = CarState(0., 0., 0., 0., 0., 0., ref_vel, 0.);
-  Road road = Road(mph2ms(50), 3, 4); //speed_limit, lanes, lane_width 
-  double safety_distance_in = 200; 
-  double clearance_in = 15; 
-  double FOV_in = 75; 
+  Road road = Road(mph2ms(49.3), 3, 4); //speed_limit, lanes, lane_width 
+  CarState ego = CarState(0., 0., 0., 0., 0., 0., road.speed_limit,0.1);
+  bool diagnostics = false;
+  double safety_distance_in = 25; 
+  double clearance_in = 10; 
+  double FOV_in = 100; 
+  double speed_control_p = 0.5; 
+  double max_accel = 0.25; 
   Predictions predictions(safety_distance_in, clearance_in, FOV_in, road); 
-  Behavior behavior(road);
-  
-  h.onMessage([&ego, &predictions, &ref_vel, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&currentLane, &road](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  Behavior behavior(safety_distance_in, clearance_in, FOV_in, road, speed_control_p, max_accel);
+ 
+  h.onMessage([&diagnostics, &ego, &predictions, &behavior, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &road](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -239,19 +240,17 @@ int main() {
         
         if (event == "telemetry") {
           // j[1] is the data JSON object
-          
+			system("clear");
+			//cout << endl << endl << endl;
         	// Main car's localization Data
           	ego.x = j[1]["x"];
           	ego.y = j[1]["y"];
           	ego.s = j[1]["s"];
           	ego.d = j[1]["d"];
           	ego.yaw = j[1]["yaw"];
-          	ego.speed = j[1]["speed"];
 			ego.lane = get_lane(ego.d, road);
 			
 			
-			//speed Limit provided by map or someone
-			double speed_limit = mph2ms(50); //50 mph constant speed limit. 
 			
           	// Previous path data given to the Planner
           	vector<double> previous_path_x = j[1]["previous_path_x"];
@@ -272,54 +271,64 @@ int main() {
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
 			
 			int prev_size = previous_path_x.size();
-			//cout << "prev_size " << prev_size << endl; 		
-			
+			if (diagnostics) cout << "prev_size " << prev_size << endl; 		
+			int keep_size = 10; 
 			
 			///
 			///
 			///
 			// Sensor fusion analytics and finite state machine
 			//cout << "sensor fusion" << endl; 			
+			
+			if (keep_size < prev_size) {
+				
+				ego.x 		= previous_path_x[keep_size];
+				ego.y 		= previous_path_y[keep_size];
+				double x1 	= previous_path_x[keep_size - 1];
+				double y1 	= previous_path_y[keep_size - 1];
+				double x2 	= previous_path_x[keep_size - 2];
+				double y2 	= previous_path_y[keep_size - 2];
+				ego.yaw 	= atan2(y1-y2,x1-x2);  //TODO why previous steps
+				vector<double> Frenet = getFrenet(ego.x, ego.y, ego.yaw, map_waypoints_x, map_waypoints_y);
+				ego.s_pred 	= Frenet[0];
+				ego.d 	= Frenet[1];
+				ego.lane = get_lane(ego.d, road);
+			}
+			else//if not enough points are available prevent overflow
+			{
+				keep_size = prev_size;
+				ego.s_pred = ego.s; //still predict some ego position 
+			}
+			
+			if (diagnostics) { cout << "keep_size " << keep_size << endl; }
 
-			if (prev_size > 0) {
-				ego.s = end_path_s; 
-			}
-			
-			predictions.update(sensor_fusion, ego, prev_size); 
+			predictions.update(sensor_fusion, ego, keep_size); 
 
-			//cout << " behavior " << endl; 
-			
-			// behavior planning 
-			
-			double speedDiffToOvertake = 2; 
-			if (predictions.get_dist_front(ego.lane) < 50 ) {
-				if (ego.lane > 0 && predictions.get_lane_free(ego.lane - 1) && predictions.get_lane_speed(ego.lane - 1)>predictions.get_lane_speed(ego.lane)+speedDiffToOvertake) {
-					ego.lane -= 1;
-				}
-				else if (ego.lane<2 && predictions.get_lane_free(ego.lane+1) && predictions.get_lane_speed(ego.lane+1)>predictions.get_lane_speed(ego.lane)+speedDiffToOvertake) {
-					ego.lane += 1;
-				}
-			}
-			
-			
-			if(predictions.get_dist_front(ego.lane) < 30) {
-				ref_vel -= .1; //m/s²
-			}
-			else if(ref_vel<speed_limit-0.5) {
-				ref_vel += .1;   
-			}
-			
+			behavior.update(sensor_fusion, ego, predictions);
+
+
 			// some printing 
-			cout << " predictions.get_lane_free ["; 
-			for (int i; i < 3; i++)
-				cout << predictions.get_lane_free(i) << " ";			
-			cout << "] laneOccupation [";   
-			for (int i; i < 3; i++)
-				cout << predictions.get_lane_occupation(i) << " ";				
-			cout << "] predictions.get_lane_speed [";
-			for (int i; i < 3; i++)
-				cout << int(predictions.get_lane_speed(i)) << " ";
-			cout << "] ego_v " << int(ref_vel) << endl; 
+			cout << "predictions.get_lane_free ["; 
+			for (int i = 0; i < road.lanes; i++) {
+				cout << predictions.get_lane_free(i) << " ";	}		
+			
+			cout << "]" << endl << "predictions.get_lane_occupation [";   
+			for (int i = 0; i < road.lanes; i++) {
+				cout << predictions.get_lane_occupation(i) << " ";		}		
+			
+			cout << "]" << endl << "predictions.get_lane_speed [";
+			for (int i = 0; i < road.lanes; i++) {
+				cout << int(predictions.get_lane_speed(i)) << " ";  }
+			
+			cout << "]" << endl << "predictions.get_dist_front [";
+				for (int i = 0; i < road.lanes; i++) {
+					cout << int(predictions.get_dist_front(i)) << " ";  }
+			
+			cout << "]" << endl << "predictions.get_dist_back [";
+			for (int i = 0; i < road.lanes; i++) {
+				cout << int(predictions.get_dist_back(i)) << " ";  }
+			cout << "]" << endl << "ego_v " << ego.speed << endl;
+			cout << "target_v " << ego.target_speed << endl; 
 			
 			
 			///
@@ -335,16 +344,15 @@ int main() {
 			double ref_x = ego.x;
 			double ref_y = ego.y;
 			double ref_yaw = deg2rad(ego.yaw);
-			//cout << "prev_size" << prev_size; 
+			
 			//init: if previous size is empty, use the car init as starting reference
 			if(prev_size < 2)
 			{				
-				//cout << "init" << endl; 
+				if (diagnostics) { cout << "init" << endl; }
 
 				//use two points for continuity
-				double prev_car_x = ego.x - cos(ego.yaw);
+				double prev_car_x = ego.x - cos(ego.yaw); 
 				double prev_car_y = ego.y - sin(ego.yaw);
-				
 				ptsx.push_back(prev_car_x);
 				ptsx.push_back(ego.x);
 				
@@ -353,15 +361,21 @@ int main() {
 			}
 			else
 			{
+			
+				ref_x = previous_path_x[keep_size-1];
+				ref_y = previous_path_y[keep_size-1];
 				
-				//redefine ref state as previous path end point
-				ref_x = previous_path_x[prev_size-1];
-				ref_y = previous_path_y[prev_size-1];
-				
-				double ref_x_prev = previous_path_x[prev_size-2];
-				double ref_y_prev = previous_path_y[prev_size-2];
+				double ref_x_prev = previous_path_x[keep_size-2];
+				double ref_y_prev = previous_path_y[keep_size-2];
+			
 				ref_yaw = atan2(ref_y-ref_y_prev,ref_x-ref_x_prev);
 				
+				//if car stops, move the spline anchor point behind the car 
+				if (ref_x_prev == ref_x && ref_y_prev == ref_y) 
+				{
+					ref_x_prev-= cos(ego.yaw);
+					ref_y_prev-= sin(ego.yaw); 
+				}
 				ptsx.push_back(ref_x_prev);
 				ptsx.push_back(ref_x);
 				
@@ -373,9 +387,9 @@ int main() {
 			//In Frenet add evenly 30 m spaced points ahead of the starting reference (anker points)
 			//cout << "next wp" << endl; 
 			
-			vector<double> next_wp0 = getXY(ego.s+30,(2+4*ego.lane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
-			vector<double> next_wp1 = getXY(ego.s+60,(2+4*ego.lane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
-			vector<double> next_wp2 = getXY(ego.s+90,(2+4*ego.lane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
+			vector<double> next_wp0 = getXY(ego.s_pred+30,(2+4*ego.lane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
+			vector<double> next_wp1 = getXY(ego.s_pred+60,(2+4*ego.lane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
+			vector<double> next_wp2 = getXY(ego.s_pred+90,(2+4*ego.lane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
 			ptsx.push_back(next_wp0[0]);
 			ptsx.push_back(next_wp1[0]);
 			ptsx.push_back(next_wp2[0]);
@@ -393,13 +407,14 @@ int main() {
 				ptsx[i] = shift_x * cos(0-ref_yaw) - shift_y * sin(0-ref_yaw);
 				ptsy[i] = shift_x * sin(0-ref_yaw) + shift_y * cos(0-ref_yaw);
 			}
-			
-			//cout << " " << endl; 
-			//cout << "spline points " << ptsx.size() << endl; 
-			/*for (int i = 0; i<ptsx.size(); i++){
-				cout << i << " " << ptsx[i] << " " << ptsy[i] << endl; 
+			if (diagnostics)
+			{
+				cout << " " << endl; 
+				cout << "spline points " << ptsx.size() << endl; 
+				for (int i = 0; i<ptsx.size(); i++){
+					cout << i << " " << ptsx[i] << " " << ptsy[i] << endl; 
+				}
 			}
-			*/
 			//TODO: Insert check that spline points aren't put in twice or list is empty. Otherwise spline crashes. 
 			
 			// create a spline 
@@ -412,22 +427,26 @@ int main() {
 			vector<double> next_x_vals;
 			vector<double> next_y_vals;
 			
-			//start with all previous points from last time
-			for(int i = 0; i<previous_path_x.size(); i++)
+			// prevent adding non-existing points when lagging or at init
+
+			//start with previous points from last time
+			for(int i = 0; i<keep_size; i++)
 			{
 				next_x_vals.push_back(previous_path_x[i]);
 				next_y_vals.push_back(previous_path_y[i]);
 			}
+
+
 			//cout << "target" << endl; 
 			//calculate how to break up spline points to travel at desired speed 
 			double target_x = 30.0;
 			double target_y = s(target_x);
 			double target_dist = sqrt(target_x*target_x+target_y*target_y);
 			double x_add_on = 0; 
-			
-			//fill up the rest of our path planner after filling it with previous points
-			for (int i = 1; i <= 50-previous_path_x.size(); i++) {
-				double N = target_dist/(0.02*ref_vel); //mph -> m/s  //ERROR?
+			if (diagnostics) { cout << "next_x_vals.size() " << next_x_vals.size() << endl; }
+			//fill up the rest of the path planner after filling it with previous points
+			for (int i = 1; i <= 50-keep_size; i++) {
+				double N = target_dist/(0.02*ego.speed); 
 				double x_point = x_add_on+(target_x)/N;
 				double y_point = s(x_point);
 				
@@ -446,6 +465,8 @@ int main() {
 				next_y_vals.push_back(y_point);
 				
 			}
+			if (diagnostics) { cout << "next_x_vals.size() " << next_x_vals.size() << endl; }
+
 			//cout << "end!" << endl; 
           	msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;

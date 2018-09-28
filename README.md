@@ -5,12 +5,45 @@ Self-Driving Car Engineer Nanodegree Program
 You can download the Term3 Simulator which contains the Path Planning Project from the [releases tab (https://github.com/udacity/self-driving-car-sim/releases/tag/T3_v1.2).
 
 ### Goals
-In this project your goal is to safely navigate around a virtual highway with other traffic that is driving +-10 MPH of the 50 MPH speed limit. You will be provided the car's localization and sensor fusion data, there is also a sparse map list of waypoints around the highway. The car should try to go as close as possible to the 50 MPH speed limit, which means passing slower traffic when possible, note that other cars will try to change lanes too. The car should avoid hitting other cars at all cost as well as driving inside of the marked road lanes at all times, unless going from one lane to another. The car should be able to make one complete loop around the 6946m highway. Since the car is trying to go 50 MPH, it should take a little over 5 minutes to complete 1 loop. Also the car should not experience total acceleration over 10 m/s^2 and jerk that is greater than 10 m/s^3.
+In this project your goal is to safely navigate around a virtual highway with other traffic that is driving +-10 MPH of the 50 MPH speed limit. 
+You will be provided the car's localization and sensor fusion data, there is also a sparse map list of waypoints around the highway. 
+The car should try to go as close as possible to the 50 MPH speed limit, which means passing slower traffic when possible, 
+note that other cars will try to change lanes too. The car should avoid hitting other cars at all cost as well as driving 
+inside of the marked road lanes at all times, unless going from one lane to another. The car should be able to make one complete 
+loop around the 6946m highway. Since the car is trying to go 50 MPH, it should take a little over 5 minutes to complete 1 loop. Also 
+the car should not experience total acceleration over 10 m/s^2 and jerk that is greater than 10 m/s^3.
 
-#### The map of the highway is in data/highway_map.txt
-Each waypoint in the list contains  [x,y,s,dx,dy] values. x and y are the waypoint's map coordinate position, the s value is the distance along the road to get to that waypoint in meters, the dx and dy values define the unit normal vector pointing outward of the highway loop.
+## Implementation
 
-The highway's waypoints loop around so the frenet s value, distance along the road, goes from 0 to 6945.554.
+The code consists of 3 header files and a main function. The headers are utility.h for small functions, the prediction and the behavior class. The resulting spline itself is computed in the main function.
+
+### Utility functions
+
+The utility functions provide the definitions of the struct CarState, the struct Road, and helper functions like getLane(). Road defines the speedlimit, the number of lanes and their width. 
+Thus, if the road parameters change, they can be changed here and the other modules change accordingly. 
+The CarState is used to compute the ego vehicles position and speed parameters. The function getLane uses the coordinate d and the struct Road to compute a lane. 
+
+
+### Prediction module  
+The prediction module computes the space in front and in the back of the vehicle. The closest vehicle in front defines the lane speed. The closest vehicle in each lane defines the dist_front and the dist_back vectors. Both the difference between ego's and vehicle's distance in present and future are used to compute the possibility to overtake, which is
+available using the get_lane_free(int lane) method. Because both the present and the future positions are used, each vehicle has to be checked individually. 
+
+### Behavior module
+The behavior module computes the lateral speed of the ego vehicle and uses a finite state machine to compute the lane. 
+The speed of the lane is limited to the road speed limit or a vehicle in front of the ego vehicle. A simple controller is used to break, and a constant factor is used to accelerate. 
+The state machine consists of the keep_lane, prepare_lane_change and change_lanes states. They are controlled using the private variable state. 
+In keep_lane, the cost function determines whether or not to switch to lane_change. The cost-function uses the lane speed limit, the space in front, and a penalty for changing lanes to determine
+whether or not to switch lanes. 
+If profitable, the state prepare_lane_change checks whether the lane change is safe. Here, additional functions like speed up or slow down could be implemented. If it's good to change, the lane change 
+function gets called. As soon as the actual position is within 1 meter in the next_lane, either keep lane or the next lane change in case of a double lane change gets called. 
+
+### Spline computation in the main routine
+
+The spline uses the current and future points to compute a smooth trajectory. Computing 50 points in advance but discarding everything but ten gives a quick reaction in case of sudden changes of situations. 
+
+
+
+
 
 ## Basic Build Instructions
 
@@ -86,55 +119,3 @@ A really helpful resource for doing this project and creating smooth trajectorie
     cd uWebSockets
     git checkout e94b6e1
     ```
-
-## Editor Settings
-
-We've purposefully kept editor configuration files out of this repo in order to
-keep it as simple and environment agnostic as possible. However, we recommend
-using the following settings:
-
-* indent using spaces
-* set tab width to 2 spaces (keeps the matrices in source code aligned)
-
-## Code Style
-
-Please (do your best to) stick to [Google's C++ style guide](https://google.github.io/styleguide/cppguide.html).
-
-## Project Instructions and Rubric
-
-Note: regardless of the changes you make, your project must be buildable using
-cmake and make!
-
-
-## Call for IDE Profiles Pull Requests
-
-Help your fellow students!
-
-We decided to create Makefiles with cmake to keep this project as platform
-agnostic as possible. Similarly, we omitted IDE profiles in order to ensure
-that students don't feel pressured to use one IDE or another.
-
-However! I'd love to help people get up and running with their IDEs of choice.
-If you've created a profile for an IDE that you think other students would
-appreciate, we'd love to have you add the requisite profile files and
-instructions to ide_profiles/. For example if you wanted to add a VS Code
-profile, you'd add:
-
-* /ide_profiles/vscode/.vscode
-* /ide_profiles/vscode/README.md
-
-The README should explain what the profile does, how to take advantage of it,
-and how to install it.
-
-Frankly, I've never been involved in a project with multiple IDE profiles
-before. I believe the best way to handle this would be to keep them out of the
-repo root to avoid clutter. My expectation is that most profiles will include
-instructions to copy files to a new location to get picked up by the IDE, but
-that's just a guess.
-
-One last note here: regardless of the IDE used, every submitted project must
-still be compilable with cmake and make./
-
-## How to write a README
-A well written README file can enhance your project and portfolio.  Develop your abilities to create professional README files by completing [this free course](https://www.udacity.com/course/writing-readmes--ud777).
-

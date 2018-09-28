@@ -25,14 +25,16 @@ struct Road {
 struct CarState {
   double x;
   double y;
-  double s;
+  double s; 
+  double s_pred;
   double d;
   double yaw;
   double speed;
-  double speed_target;
+  double target_speed;
   int    lane;
-  CarState (double X=0, double Y=0, double S=0, double D=0, double YAW=0, double V=0, double VF=0, double L=0) : x(X), y(Y), s(S), yaw(YAW), 
-           speed(V), speed_target(VF), lane(L) {}
+  CarState (double X=0, double Y=0, double S=0, double D=0, 
+		double YAW=0, double V=0, double TV=0, double L=0) : 
+		x(X), y(Y), s(S), yaw(YAW), speed(V), target_speed(TV), lane(L)  {}
 };
 
 
@@ -44,7 +46,18 @@ double mstomph(double ms){ return ms * 2.23694;	  }
 
 
 int get_lane(double d, Road road) {
-  return (int)(d / road.lane_width);
+	int lane = (int)(d / road.lane_width);
+	if (lane < 0) 
+	{ 
+		lane = 0; 
+		std::cout << "lane < 0 d=" << d << "!!!!!!!!!!!!!!!!" << std::endl;
+	}
+	if (lane > road.lanes-1)
+	{	
+		lane = road.lanes-1; 
+		std::cout << "lane > road.lanes!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << std::endl;
+	}
+	return lane; 
 }
 
 double distance(double x1, double y1, double x2, double y2) {
