@@ -15,6 +15,14 @@ the car should not experience total acceleration over 10 m/s^2 and jerk that is 
 
 ## Implementation
 
+A video description of my project is available on youtube: 
+
+
+<a href="http://www.youtube.com/watch?feature=player_embedded&v=k1URzgJJF5M
+" target="_blank"><img src="http://img.youtube.com/vi/k1URzgJJF5M/0.jpg" 
+alt="Path planning project at Udacity" width="240" height="180" border="10" /></a>
+
+
 The code consists of 3 header files and a main function. The headers are utility.h for small functions, the prediction and the behavior class. The resulting spline itself is computed in the main function.
 
 ### Utility functions
